@@ -509,7 +509,7 @@ public class LuaAnnotationGenerator
                     case SpecialType.System_Decimal:
                     case SpecialType.System_Single:
                     case SpecialType.System_Double:
-                        retTypeStr = "number";
+                        retTypeStr = $"number | {type.GetFullName()}";
                         break;
                     default:
                         retTypeStr = type.GetFullName();

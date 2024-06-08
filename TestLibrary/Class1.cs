@@ -83,3 +83,7 @@ public class TestClass2
      */
     public int TestField2;
 }
+
+public class TestList : List<int>{
+
+}

@@ -17,12 +17,12 @@ public static class Extension
             var namespaceName = namedTypeSymbol.GetFullNamespace();
             if (!string.IsNullOrEmpty(namespaceName))
             {
-                return $"{namespaceName}.{namedTypeSymbol.Name}";
+                return $"{namespaceName}.{symbol.GetSimpleIdentify()}";
             }
-            return namedTypeSymbol.Name;
+            return symbol.GetSimpleIdentify();
         }
         
-        return symbol.Name;
+        return symbol.GetSimpleIdentify();
     }
     
     public static string GetFullIdentify(this INamedTypeSymbol symbol)
@@ -36,8 +36,22 @@ public static class Extension
         
         fullName.Append(namespaceName);
         fullName.Append(".");
-        fullName.Append(symbol.Name);
+        fullName.Append(symbol.GetSimpleIdentify());
         
+        return fullName.ToString();
+    }
+
+    public static string GetSimpleIdentify(this ITypeSymbol symbol)
+    {
+        var fullName = new StringBuilder();
+        fullName.Append(symbol.Name);
+
+        if (symbol is INamedTypeSymbol { IsGenericType: true, IsUnboundGenericType: false } namedTypeSymbol)
+        {
+            fullName.Append("__");
+            fullName.Append(string.Join("___", namedTypeSymbol.TypeArguments.Select(t => t.GetSimpleIdentify())));
+        }
+
         return fullName.ToString();
     }
     

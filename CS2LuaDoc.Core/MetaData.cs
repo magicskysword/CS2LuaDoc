@@ -1,4 +1,5 @@
 ﻿using System.Collections.Immutable;
+using System.Text;
 using Microsoft.CodeAnalysis;
 
 namespace CS2LuaDoc.Core;
@@ -27,14 +28,39 @@ public class ClassMetaData : BaseMetaData
     public List<TypeParameterMetaData> GenericTypeParameters { get; set; } = new();
     public ClassMetaData? BaseClassMetaData { get; set; }
     public ITypeSymbol TypeSymbol { get; set; } = null!;
+    public List<ITypeSymbol> GenericTypeArguments { get; set; } = new();
 
     public string GetFullName()
     {
         if (!string.IsNullOrEmpty(Namespace))
         {
-            return $"{Namespace}.{Name}";
+            return $"{Namespace}.{GetTypeName()}";
         }
         
+        return GetTypeName();
+    }
+
+    public string GetTypeName()
+    {
+        if (IsGenericClass)
+        {
+            try
+            {
+                var fullName = new StringBuilder();
+                fullName.Append(TypeSymbol.Name);
+                fullName.Append("__");
+                fullName.Append(string.Join("___", GenericTypeArguments.Select(t => t.GetSimpleIdentify())));
+                return fullName.ToString();
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e);
+                Console.WriteLine(Name);
+                Console.WriteLine(TypeSymbol.GetFullName());
+                throw;
+            }
+        }
+
         return Name;
     }
 }

@@ -64,6 +64,9 @@ public class CSMetaDataLoader
                 
         if(classSymbol.IsAnonymousType)
             return null;
+
+        if (classSymbol.IsUnboundGenericType)
+            return null;
                 
         if(classSymbol.Name.StartsWith("<"))
             return null;
@@ -119,6 +122,11 @@ public class CSMetaDataLoader
                 var typeParameterMetaData = new TypeParameterMetaData();
                 RejectTypeParameterMetaData(typeParameterMetaData, typeParameterSymbol);
                 classMetaData.GenericTypeParameters.Add(typeParameterMetaData);
+            }
+
+            foreach (var typeArgument in classSymbol.TypeArguments)
+            {
+                classMetaData.GenericTypeArguments.Add(typeArgument);
             }
         }
         
