@@ -1,10 +1,7 @@
 ﻿using System.Diagnostics;
+using System.Runtime.InteropServices.ComTypes;
 using CS2LuaDoc.Core;
-using Microsoft.Build.Locator;
-using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp;
-using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Microsoft.CodeAnalysis.MSBuild;
+
 
 namespace TestLibrary;
 
@@ -12,20 +9,26 @@ public class Program
 {
     public static async Task<int> Main(string[] args)
     {
-        var slnPath = "D:/codes/csharp/CS2LuaDoc/CS2LuaDoc.sln";
+        var slnPath = "D:/code/csharp/CS2LuaDoc/CS2LuaDoc.sln";
+        var outDir = "D:/code/csharp/CS2LuaDoc/output/";
         
         var solutionLoader = new SolutionLoader(slnPath);
         await solutionLoader.LoadAsync();
         var csMetaDataLoader = new CSMetaDataLoader(solutionLoader);
         var projectMetaData = await csMetaDataLoader.LoadAsync();
-        var luaAnnotationBuilder = new LuaAnnotationBuilder();
+        var luaAnnotationBuilder = new LuaAnnotationGeneratorBuilder();
+
+        if (Directory.Exists(outDir))
+        {
+            Directory.Delete(outDir, true);
+        }
+        Directory.CreateDirectory(outDir);
+
+        var generator = luaAnnotationBuilder.SetProjectMetaData(projectMetaData)
+            .SetOutputPath("D:/code/csharp/CS2LuaDoc/output/")
+            .Build();
         
-        Directory.Delete("D:/codes/csharp/CS2LuaDoc/output/", true);
-        Directory.CreateDirectory("D:/codes/csharp/CS2LuaDoc/output/");
-        
-        await luaAnnotationBuilder.SetProjectMetaData(projectMetaData)
-            .SetOutputPath("D:/codes/csharp/CS2LuaDoc/output/")
-            .BuildAsync();
+        await generator.GenerateAsync();
         
         Console.WriteLine("Build Success");
         return 0;

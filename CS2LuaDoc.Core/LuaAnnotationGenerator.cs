@@ -2,27 +2,42 @@
 using System.Xml;
 using Cysharp.Threading.Tasks;
 using Microsoft.CodeAnalysis;
+using NLog;
 
 namespace CS2LuaDoc.Core;
 
-internal class LuaAnnotationGenerator
+public class LuaAnnotationGenerator
 {
-    public int PreClassInOneFileCount { get; set; } = 200;
+    public int PreClassInOneFileCount { get; set; } = 150;
+    public List<LuaAnnotationClassFilter> ClassFilters { get; set; } = new();
+    public ProjectMetaData ProjectMetaData { get; set; } = null!;
+    public string OutputPath { get; set; } = string.Empty;
     
-    public async UniTask Generate(ProjectMetaData projectMetaData, string outputPath)
+    private static Logger logger = LogManager.GetCurrentClassLogger();
+    
+    public async UniTask GenerateAsync()
     {
-        await GenerateMeta(outputPath);
+        await GenerateMeta(OutputPath);
         
-        var classGroup = projectMetaData.ClassMetaDataList.GroupBy(x => x.Namespace);
-        foreach (var group in classGroup)
+        var allClassNamespace = ProjectMetaData.ClassMetaDataCollection
+            .Select(x => x.Value)
+            .Where(x => ClassFilters.All(filter => filter.FilterClass(x)))
+            .GroupBy(x => x.Namespace)
+            .ToList();
+        
+        for (var index = 0; index < allClassNamespace.Count; index++)
         {
+            var group = allClassNamespace[index];
             var namespaceName = group.Key;
+            
+            logger.Debug("GenerateNamespace {Namespace} {Index}/{Max}", namespaceName, index + 1, allClassNamespace.Count);
+            
             var classMetaDataList = group.ToList();
-            await GenerateNamespace(namespaceName, classMetaDataList, outputPath);
+            await GenerateNamespace(namespaceName, classMetaDataList);
         }
     }
 
-    private async UniTask GenerateNamespace(string? namespaceName, List<ClassMetaData> classMetaDataList, string outputPath)
+    private async UniTask GenerateNamespace(string? namespaceName, List<ClassMetaData> classMetaDataList)
     {
         var classCounter = 0;
         var classGroup = classMetaDataList.GroupBy(x => classCounter++ / PreClassInOneFileCount).ToList();
@@ -32,11 +47,11 @@ internal class LuaAnnotationGenerator
             var classMetaDataListInFile = group.ToList();
             if(classGroup.Count == 1)
             {
-                await GenerateFile(-1, namespaceName, classMetaDataListInFile, outputPath);
+                await GenerateFile(-1, namespaceName, classMetaDataListInFile);
             }
             else
             {
-                await GenerateFile(index, namespaceName, classMetaDataListInFile, outputPath);
+                await GenerateFile(index, namespaceName, classMetaDataListInFile);
             }
         }
     }
@@ -54,7 +69,7 @@ internal class LuaAnnotationGenerator
         await File.WriteAllTextAsync(Path.Combine(outputPath, ".meta.lua"), sb.ToString());
     }
     
-    private async UniTask GenerateFile(int index, string? namespaceName, List<ClassMetaData> classMetaDataListInFile, string outputPath)
+    private async UniTask GenerateFile(int index, string? namespaceName, List<ClassMetaData> classMetaDataListInFile)
     {
         string fileName;
         string namespaceNameInFile;
@@ -96,7 +111,7 @@ internal class LuaAnnotationGenerator
             GenerateClass(namespaceName, classMetaData, sb);
         }
         
-        await File.WriteAllTextAsync(Path.Combine(outputPath, fileName), sb.ToString());
+        await File.WriteAllTextAsync(Path.Combine(OutputPath, fileName), sb.ToString());
     }
 
     private void GenerateClass(string? namespaceName, ClassMetaData classMetaData, StringBuilder sb)
@@ -113,7 +128,38 @@ internal class LuaAnnotationGenerator
                 sb.AppendLine($"-- {remarkOneLine}");
             }
         }
-        sb.AppendLine($"---@class {classMetaData.Name}");
+        sb.Append($"---@class {classMetaData.GetFullName()}");
+        // 继承处理
+        if (classMetaData.BaseClassMetaData != null)
+        {
+            sb.Append($" : {classMetaData.BaseClassMetaData.GetFullName()}");
+        }
+        sb.AppendLine();
+        
+        // 泛型参数处理
+        if (classMetaData.IsGenericClass)
+        {
+            foreach (var typeParameter in classMetaData.GenericTypeParameters)
+            {
+                sb.Append($"---@generic {typeParameter.Name}");
+                if (typeParameter.ConstraintTypes.Count > 0)
+                {
+                    sb.Append(" : ");
+                }
+                for (var index = 0; index < typeParameter.ConstraintTypes.Count; index++)
+                {
+                    var constraintType = typeParameter.ConstraintTypes[index];
+                    sb.Append($"{GetLuaType(constraintType)}");
+                    if (index != typeParameter.ConstraintTypes.Count - 1)
+                    {
+                        sb.Append(" | ");
+                    }
+                }
+
+                sb.AppendLine();
+            }
+        }
+        
         foreach (var memberMetaData in classMetaData.FieldMetaDataList)
         {
             GenerateField(classMetaData, memberMetaData, sb);
@@ -142,11 +188,9 @@ internal class LuaAnnotationGenerator
             sb.AppendLine($"CS.{classMetaData.Name} = {classMetaData.Name}");
         }
         
-        
         foreach (var memberMetaData in classMetaData.MethodMetaDataList)
         {
             GenerateMethod(classMetaData, memberMetaData, sb);
-            sb.AppendLine();
         }
         
         sb.AppendLine();
@@ -225,7 +269,7 @@ internal class LuaAnnotationGenerator
                 sb.Append(", ");
             }
         }
-        sb.Append($"): {classMetaData.Name}");
+        sb.Append($"): {GetLuaType(classMetaData.TypeSymbol)}");
         sb.AppendLine();
     }
     
@@ -235,6 +279,8 @@ internal class LuaAnnotationGenerator
         {
             return;
         }
+        
+        var parameters = methodMetaData.Parameters;
         
         TryAnalysisMethodRemark(methodMetaData.RawRemark, out var remarkDoc);
         
@@ -246,9 +292,10 @@ internal class LuaAnnotationGenerator
             }
         }
         
+        // 泛型参数处理
         if (methodMetaData.IsGenericMethod)
         {
-            foreach (var typeParameter in methodMetaData.TypeParameters)
+            foreach (var typeParameter in methodMetaData.TypeParameters.Concat(classMetaData.GenericTypeParameters))
             {
                 sb.Append($"---@generic {typeParameter.Name}");
                 if (typeParameter.ConstraintTypes.Count > 0)
@@ -269,15 +316,9 @@ internal class LuaAnnotationGenerator
             }
         }
         
+        // 参数处理
         foreach (var parameterMetaData in methodMetaData.Parameters)
         {
-            if (parameterMetaData.IsOut)
-            {
-                continue;
-            }
-            
-            
-            
             var paramRemark = string.Empty;
             var paramName = ParseParameterName(parameterMetaData.Name);
             if (remarkDoc?.TryVisitParam(paramName, out var txt) == true)
@@ -285,16 +326,31 @@ internal class LuaAnnotationGenerator
                 paramRemark = txt.TransToSingleLine();
             }
             
+            sb.Append($"---@param {paramName} {GetLuaType(parameterMetaData.Type)}");
+
+            if (parameterMetaData.IsRef)
+            {
+                sb.Append(" ref:");
+            }
+            else if (parameterMetaData.IsOut)
+            {
+                sb.Append(" out:");
+            }
+            else if (parameterMetaData.IsParams)
+            {
+                sb.Append(" params:");
+            }
+            
             if (!string.IsNullOrEmpty(paramRemark))
             {
-                sb.AppendLine($"---@param {paramName} {GetLuaType(parameterMetaData.Type)} {paramRemark}");
+                sb.Append(' ');
+                sb.Append(paramRemark);
             }
-            else
-            {
-                sb.AppendLine($"---@param {paramName} {GetLuaType(parameterMetaData.Type)}");
-            }
+            
+            sb.AppendLine();
         }
         
+        // 返回值处理
         if (methodMetaData.ReturnType.SpecialType != SpecialType.System_Void)
         {
             sb.Append($"---@return {GetLuaType(methodMetaData.ReturnType)}");
@@ -313,6 +369,7 @@ internal class LuaAnnotationGenerator
             sb.AppendLine();
         }
         
+        // 方法定义
         var methodName = methodMetaData.Name;
         if (methodMetaData.IsStatic)
         {
@@ -323,8 +380,7 @@ internal class LuaAnnotationGenerator
             sb.Append($"function {classMetaData.Name}:{methodName}(");
         }
         
-        
-        var parameters = methodMetaData.Parameters;
+        int normalParamCount = 0;
         for (var i = 0; i < parameters.Count; i++)
         {
             var parameter = parameters[i];
@@ -333,14 +389,17 @@ internal class LuaAnnotationGenerator
                 continue;
             }
             
-            if (i != 0)
+            if (normalParamCount != 0)
             {
                 sb.Append(", ");
             }
             
+            normalParamCount++;
             sb.Append(ParseParameterName(parameter.Name));
         }
-        sb.Append(") end");
+        sb.AppendLine(") end");
+        
+        sb.AppendLine();
     }
 
     /// <summary>
@@ -350,17 +409,17 @@ internal class LuaAnnotationGenerator
     /// <returns></returns>
     private string ParseParameterName(string name)
     {
-        if (name == "function")
+        return name switch
         {
-            return "_function";
-        }
-
-        if (name == "end")
-        {
-            return "_end";
-        }
-        
-        return name;
+            "function" => "_function",
+            "end" => "_end",
+            "local" => "_local",
+            "repeat" => "_repeat",
+            "if" => "_if",
+            "else" => "_else",
+            "elseif" => "_elseif",
+            _ => name
+        };
     }
 
 
@@ -394,8 +453,11 @@ internal class LuaAnnotationGenerator
                     }
                 }
                 sb.Append(")");
-                sb.Append(": ");
-                sb.Append(GetLuaType(delegateInvokeMethod.ReturnType));
+                if(delegateInvokeMethod.ReturnType.SpecialType != SpecialType.System_Void)
+                {
+                    sb.Append(" : ");
+                    sb.Append(GetLuaType(delegateInvokeMethod.ReturnType));
+                }
                 retTypeStr = sb.ToString();
                 break;
             }
@@ -450,7 +512,7 @@ internal class LuaAnnotationGenerator
                         retTypeStr = "number";
                         break;
                     default:
-                        retTypeStr = type.Name;
+                        retTypeStr = type.GetFullName();
                         break;
                 }
                 break;
@@ -469,8 +531,13 @@ internal class LuaAnnotationGenerator
         }
         
         var remark = rawRemark.Trim();
-        var xmlDocument = new XmlDocument();
-        xmlDocument.LoadXml(remark);
+        var xmlDocument = remark.TryParseXmlDoc();
+        if (xmlDocument == null)
+        {
+            txt = string.Empty;
+            return false;
+        }
+        
         return xmlDocument.TryVisitSummary(out txt);
     }
     
@@ -478,13 +545,18 @@ internal class LuaAnnotationGenerator
     {
         if(string.IsNullOrEmpty(rawRemark))
         {
-            o = null!;
+            o = null;
             return false;
         }
         
         var remark = rawRemark.Trim();
-        var xmlDocument = new XmlDocument();
-        xmlDocument.LoadXml(remark);
+        var xmlDocument = remark.TryParseXmlDoc();
+        if (xmlDocument == null)
+        {
+            o = null;
+            return false;
+        }
+        
         o = xmlDocument;
         return true;
     }

@@ -4,6 +4,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.MSBuild;
+using NLog;
 
 namespace CS2LuaDoc.Core;
 
@@ -15,6 +16,8 @@ public class CSMetaDataLoader
     }
     
     public SolutionLoader SolutionLoader { get; }
+    
+    private static Logger logger = LogManager.GetCurrentClassLogger();
     
     public async UniTask<ProjectMetaData> LoadAsync()
     {
@@ -29,51 +32,53 @@ public class CSMetaDataLoader
             throw new Exception("工程加载失败");
         }
 
-        foreach (var compilation in SolutionLoader.CachedCompilations)
+        for (var index = 0; index < SolutionLoader.CachedCompilations.Count; index++)
         {
+            var compilation = SolutionLoader.CachedCompilations[index];
+            logger.Debug("Load Compliation {Compliation} {Index}/{Max}", 
+                compilation.AssemblyName, 
+                index + 1, 
+                SolutionLoader.CachedCompilations.Count);
+
             var visitor = new ClassDeclarationVisitor();
             visitor.Visit(compilation.GlobalNamespace);
-            
+
             foreach (var classSymbol in visitor.classDeclarations)
             {
-                if(classSymbol.IsImplicitClass)
-                    continue;
-                
-                if(classSymbol.IsAnonymousType)
-                    continue;
-                
-                if(classSymbol.Name.StartsWith("<"))
-                    continue;
-                
-                if(classSymbol.Name.Contains("="))
-                    continue;
-                
-                var classMetaData = new ClassMetaData();
-                RejectClassMetaData(classMetaData, classSymbol);
-                projectMetaData.ClassMetaDataList.Add(classMetaData);
+                TryLoadClass(projectMetaData, classSymbol);
             }
         }
 
         return projectMetaData;
     }
-
-    private string? GetFullNamespace(INamedTypeSymbol classSymbol)
+    
+    private ClassMetaData? TryLoadClass(ProjectMetaData projectMetaData,INamedTypeSymbol classSymbol)
     {
-        var namespaceSymbol = classSymbol.ContainingNamespace;
-        if (namespaceSymbol == null || namespaceSymbol.IsGlobalNamespace)
-        {
+        var classIdentifier = classSymbol.GetFullIdentify();
+        // 排除重复的类
+        if(projectMetaData.ClassMetaDataCollection.TryGetValue(classIdentifier, out var existClassMetaData))
+            return existClassMetaData;
+                
+        if(classSymbol.IsImplicitClass)
             return null;
-        }
-        
-        var namespaceName = namespaceSymbol.Name;
-        var parentNamespace = namespaceSymbol.ContainingNamespace;
-        while (parentNamespace != null && !parentNamespace.IsGlobalNamespace)
-        {
-            namespaceName = $"{parentNamespace.Name}.{namespaceName}";
-            parentNamespace = parentNamespace.ContainingNamespace;
-        }
-        
-        return namespaceName;
+                
+        if(classSymbol.IsAnonymousType)
+            return null;
+                
+        if(classSymbol.Name.StartsWith("<"))
+            return null;
+                
+        if(classSymbol.Name.Contains("="))
+            return null;
+                
+        // 如果是委托类型，不处理
+        if (classSymbol.BaseType != null && classSymbol.BaseType.Name == "MulticastDelegate")
+            return null;
+                
+        var classMetaData = new ClassMetaData();
+        RejectClassMetaData(projectMetaData, classMetaData, classSymbol);
+        projectMetaData.ClassMetaDataCollection[classIdentifier] = classMetaData;
+        return classMetaData;
     }
 
     private void RejectBaseMetaData(BaseMetaData metaData, ISymbol symbol)
@@ -83,11 +88,20 @@ public class CSMetaDataLoader
         metaData.RawRemark = rawRemark ?? string.Empty;
     }
     
-    private void RejectClassMetaData(ClassMetaData classMetaData, INamedTypeSymbol classSymbol)
+    private void RejectClassMetaData(ProjectMetaData projectMetaData, ClassMetaData classMetaData,
+        INamedTypeSymbol classSymbol)
     {
         RejectBaseMetaData(classMetaData, classSymbol);
-        classMetaData.Namespace = GetFullNamespace(classSymbol);
+        classMetaData.Namespace = classSymbol.GetFullNamespace();
         classMetaData.IsPublic = classSymbol.DeclaredAccessibility == Accessibility.Public;
+        classMetaData.TypeSymbol = classSymbol;
+        
+        // 基类处理
+        if (classSymbol.BaseType != null)
+        {
+            classMetaData.BaseClassMetaData = TryLoadClass(projectMetaData, classSymbol.BaseType);
+        }
+        
         // 构造函数
         classMetaData.ConstructorMetaDataList.AddRange(classSymbol.Constructors.Select(constructorSymbol =>
         {
@@ -95,6 +109,18 @@ public class CSMetaDataLoader
             RejectMethodMetaData(constructorMetaData, constructorSymbol);
             return constructorMetaData;
         }));
+        
+        // 泛型处理
+        if (classSymbol.IsGenericType)
+        {
+            classMetaData.IsGenericClass = true;
+            foreach (var typeParameterSymbol in classSymbol.TypeParameters)
+            {
+                var typeParameterMetaData = new TypeParameterMetaData();
+                RejectTypeParameterMetaData(typeParameterMetaData, typeParameterSymbol);
+                classMetaData.GenericTypeParameters.Add(typeParameterMetaData);
+            }
+        }
         
         var members = classSymbol.GetMembers();
         foreach (var member in members)
@@ -176,8 +202,8 @@ public class CSMetaDataLoader
             // 扩展方法的第一个参数是扩展的类型
             foreach (var parameterSymbol in methodSymbol.Parameters.Skip(1))
             {
-                var parameterMetaData = new MethodParameterMetaData();
-                RejectMethodParameterMetaData(parameterMetaData, parameterSymbol);
+                var parameterMetaData = new ParameterMetaData();
+                RejectParameterMetaData(parameterMetaData, parameterSymbol);
                 methodMetaData.Parameters.Add(parameterMetaData);
             }
         }
@@ -186,8 +212,8 @@ public class CSMetaDataLoader
             methodMetaData.IsStatic = methodSymbol.IsStatic;
             foreach (var parameterSymbol in methodSymbol.Parameters)
             {
-                var parameterMetaData = new MethodParameterMetaData();
-                RejectMethodParameterMetaData(parameterMetaData, parameterSymbol);
+                var parameterMetaData = new ParameterMetaData();
+                RejectParameterMetaData(parameterMetaData, parameterSymbol);
                 methodMetaData.Parameters.Add(parameterMetaData);
             }
         }
@@ -197,20 +223,20 @@ public class CSMetaDataLoader
             methodMetaData.IsGenericMethod = true;
             foreach (var typeParameterSymbol in methodSymbol.TypeParameters)
             {
-                var typeParameterMetaData = new MethodTypeParameterMetaData();
-                RejectMethodTypeParameterMetaData(typeParameterMetaData, typeParameterSymbol);
+                var typeParameterMetaData = new TypeParameterMetaData();
+                RejectTypeParameterMetaData(typeParameterMetaData, typeParameterSymbol);
                 methodMetaData.TypeParameters.Add(typeParameterMetaData);
             }
         }
     }
 
-    private void RejectMethodTypeParameterMetaData(MethodTypeParameterMetaData typeParameterMetaData, ITypeParameterSymbol typeParameterSymbol)
+    private void RejectTypeParameterMetaData(TypeParameterMetaData typeParameterMetaData, ITypeParameterSymbol typeParameterSymbol)
     {
         RejectBaseMetaData(typeParameterMetaData, typeParameterSymbol);
         typeParameterMetaData.ConstraintTypes.AddRange(typeParameterSymbol.ConstraintTypes);
     }
 
-    private void RejectMethodParameterMetaData(MethodParameterMetaData parameterMetaData, IParameterSymbol parameterSymbol)
+    private void RejectParameterMetaData(ParameterMetaData parameterMetaData, IParameterSymbol parameterSymbol)
     {
         RejectBaseMetaData(parameterMetaData, parameterSymbol);
         parameterMetaData.Type = parameterSymbol.Type;
