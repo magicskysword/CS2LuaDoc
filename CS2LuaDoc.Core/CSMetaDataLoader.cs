@@ -79,8 +79,9 @@ public class CSMetaDataLoader
             return null;
                 
         var classMetaData = new ClassMetaData();
-        RejectClassMetaData(projectMetaData, classMetaData, classSymbol);
         projectMetaData.ClassMetaDataCollection[classIdentifier] = classMetaData;
+        
+        RejectClassMetaData(projectMetaData, classMetaData, classSymbol);
         return classMetaData;
     }
 
@@ -109,7 +110,7 @@ public class CSMetaDataLoader
         classMetaData.ConstructorMetaDataList.AddRange(classSymbol.Constructors.Select(constructorSymbol =>
         {
             var constructorMetaData = new MethodMetaData();
-            RejectMethodMetaData(constructorMetaData, constructorSymbol);
+            RejectMethodMetaData(projectMetaData, constructorMetaData, constructorSymbol);
             return constructorMetaData;
         }));
         
@@ -169,7 +170,7 @@ public class CSMetaDataLoader
                         continue;
                     
                     var methodMetaData = new MethodMetaData();
-                    RejectMethodMetaData(methodMetaData, methodSymbol);
+                    RejectMethodMetaData(projectMetaData, methodMetaData, methodSymbol);
                     classMetaData.MethodMetaDataList.Add(methodMetaData);
                     break;
                 }
@@ -196,34 +197,36 @@ public class CSMetaDataLoader
         RejectBaseMetaData(propertyMetaData, propertySymbol);
         propertyMetaData.Type = propertySymbol.Type;
         propertyMetaData.IsPublic = propertySymbol.DeclaredAccessibility == Accessibility.Public;
+        // 如果是索引器
+        if (propertySymbol.IsIndexer)
+        {
+            foreach (var parameter in propertySymbol.Parameters)
+            {
+                var parameterMetaData = new ParameterMetaData();
+                RejectParameterMetaData(parameterMetaData, parameter);
+                propertyMetaData.Parameters.Add(parameterMetaData);
+            }
+            propertyMetaData.IsIndexer = true;
+        }
+        // 是否有get和set
+        propertyMetaData.HasGetter = propertySymbol.GetMethod != null;
+        propertyMetaData.HasSetter = propertySymbol.SetMethod != null;
     }
     
-    private void RejectMethodMetaData(MethodMetaData methodMetaData, IMethodSymbol methodSymbol)
+    private void RejectMethodMetaData(ProjectMetaData projectMetaData, MethodMetaData methodMetaData,
+        IMethodSymbol methodSymbol)
     {
         RejectBaseMetaData(methodMetaData, methodSymbol);
         methodMetaData.ReturnType = methodSymbol.ReturnType;
         methodMetaData.IsPublic = methodSymbol.DeclaredAccessibility == Accessibility.Public;
-        if (methodSymbol.IsExtensionMethod)
+        methodMetaData.IsStatic = methodSymbol.IsStatic;
+        IEnumerable<IParameterSymbol> parameters = methodSymbol.Parameters;
+        
+        foreach (var parameterSymbol in parameters)
         {
-            // 扩展方法在xlua里调用时为实例方法
-            methodMetaData.IsStatic = false;
-            // 扩展方法的第一个参数是扩展的类型
-            foreach (var parameterSymbol in methodSymbol.Parameters.Skip(1))
-            {
-                var parameterMetaData = new ParameterMetaData();
-                RejectParameterMetaData(parameterMetaData, parameterSymbol);
-                methodMetaData.Parameters.Add(parameterMetaData);
-            }
-        }
-        else
-        {
-            methodMetaData.IsStatic = methodSymbol.IsStatic;
-            foreach (var parameterSymbol in methodSymbol.Parameters)
-            {
-                var parameterMetaData = new ParameterMetaData();
-                RejectParameterMetaData(parameterMetaData, parameterSymbol);
-                methodMetaData.Parameters.Add(parameterMetaData);
-            }
+            var parameterMetaData = new ParameterMetaData();
+            RejectParameterMetaData(parameterMetaData, parameterSymbol);
+            methodMetaData.Parameters.Add(parameterMetaData);
         }
         
         if (methodSymbol.IsGenericMethod)
@@ -234,6 +237,21 @@ public class CSMetaDataLoader
                 var typeParameterMetaData = new TypeParameterMetaData();
                 RejectTypeParameterMetaData(typeParameterMetaData, typeParameterSymbol);
                 methodMetaData.TypeParameters.Add(typeParameterMetaData);
+            }
+        }
+
+        if (methodSymbol.IsExtensionMethod)
+        {
+            // 如果是扩展函数，注入到对应类型之中
+            var targetType = methodSymbol.GetExtensionTypes();
+            var extensionMethod = methodMetaData.GetExtensionMethod();
+            foreach (var typeSymbol in targetType)
+            {
+                var classMetaData = TryLoadClass(projectMetaData, typeSymbol);
+                if (classMetaData != null)
+                {
+                    classMetaData.MethodMetaDataList.Add(extensionMethod);
+                }
             }
         }
     }
@@ -251,5 +269,6 @@ public class CSMetaDataLoader
         parameterMetaData.IsRef = parameterSymbol.RefKind == RefKind.Ref;
         parameterMetaData.IsOut = parameterSymbol.RefKind == RefKind.Out;
         parameterMetaData.IsParams = parameterSymbol.IsParams;
+        parameterMetaData.IsOptional = parameterSymbol.HasExplicitDefaultValue;
     }
 }

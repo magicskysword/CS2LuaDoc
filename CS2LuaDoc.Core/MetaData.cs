@@ -30,26 +30,29 @@ public class ClassMetaData : BaseMetaData
     public ITypeSymbol TypeSymbol { get; set; } = null!;
     public List<ITypeSymbol> GenericTypeArguments { get; set; } = new();
 
-    public string GetFullName()
+    public string GetFullName(Func<ITypeSymbol, string>? genericTypeNameGetter = null)
     {
         if (!string.IsNullOrEmpty(Namespace))
         {
-            return $"{Namespace}.{GetTypeName()}";
+            return $"{Namespace}.{GetTypeName(genericTypeNameGetter)}";
         }
         
-        return GetTypeName();
+        return GetTypeName(genericTypeNameGetter);
     }
 
-    public string GetTypeName()
+    public string GetTypeName(Func<ITypeSymbol, string>? genericTypeNameGetter = null)
     {
+        genericTypeNameGetter ??= t => t.GetFullName();
+        
         if (IsGenericClass)
         {
             try
             {
                 var fullName = new StringBuilder();
                 fullName.Append(TypeSymbol.Name);
-                fullName.Append("__");
-                fullName.Append(string.Join("___", GenericTypeArguments.Select(t => t.GetSimpleIdentify())));
+                fullName.Append("<");
+                fullName.Append(string.Join(", ", GenericTypeArguments.Select(genericTypeNameGetter)));
+                fullName.Append(">");
                 return fullName.ToString();
             }
             catch (Exception e)
@@ -75,6 +78,10 @@ public class PropertyMetaData : BaseMetaData
 {
     public ITypeSymbol Type { get; set; } = null!;
     public bool IsPublic { get; set; } = true;
+    public bool IsIndexer { get; set; } = false;
+    public bool HasGetter { get; set; } = false;
+    public bool HasSetter { get; set; } = false;
+    public List<ParameterMetaData> Parameters { get; set; } = new();
 }
 
 public class EventMetaData : BaseMetaData
@@ -94,6 +101,22 @@ public class MethodMetaData : BaseMetaData
     /// 泛型参数
     /// </summary>
     public List<TypeParameterMetaData> TypeParameters { get; set; } = new();
+
+    public MethodMetaData GetExtensionMethod()
+    {
+        var method = new MethodMetaData
+        {
+            Name = Name,
+            IsStatic = false,
+            IsPublic = IsPublic,
+            ReturnType = ReturnType,
+            Parameters = Parameters.Skip(1).ToList(),
+            IsGenericMethod = IsGenericMethod,
+            TypeParameters = TypeParameters
+        };
+
+        return method;
+    }
 }
 
 public class ParameterMetaData : BaseMetaData
@@ -103,6 +126,7 @@ public class ParameterMetaData : BaseMetaData
     public bool IsRef { get; set; }
     public bool IsOut { get; set; }
     public bool IsParams { get; set; }
+    public bool IsOptional { get; set; } = false;
 }
 
 public class TypeParameterMetaData : BaseMetaData

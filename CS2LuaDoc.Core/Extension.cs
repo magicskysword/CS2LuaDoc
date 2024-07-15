@@ -153,6 +153,57 @@ public static class Extension
         return builder;
     }
 
+    public static List<INamedTypeSymbol> GetExtensionTypes(this IMethodSymbol methodSymbol)
+    {
+        var extensionTypes = new List<INamedTypeSymbol>();
+        
+        if (methodSymbol.Parameters.Length == 0)
+            return extensionTypes;
+        
+        var firstParam = methodSymbol.Parameters[0];
+        if (!firstParam.IsThis)
+            return extensionTypes;
+        
+        // 检查类型，如果是普通类型直接返回，如果是泛型类型则获取约束
+        if (firstParam.Type is INamedTypeSymbol namedTypeSymbol)
+        {
+            if (!namedTypeSymbol.IsGenericType)
+            {
+                extensionTypes.Add(namedTypeSymbol);
+            }
+            else
+            {
+                // 获取所有泛型约束
+                var genericConstraints = methodSymbol.TypeParameters;
+                ITypeParameterSymbol? typeParameterSymbol = null;
+                foreach (var constraint in genericConstraints)
+                {
+                    if (constraint.Name == namedTypeSymbol.Name)
+                    {
+                        typeParameterSymbol = constraint;
+                        break;
+                    }
+                }
+
+                if (typeParameterSymbol != null)
+                {
+                    foreach (var typeSymbol in typeParameterSymbol.ConstraintTypes)
+                    {
+                        if (typeSymbol is INamedTypeSymbol namedType)
+                        {
+                            if (namedType.TypeKind == TypeKind.Class)
+                            {
+                                extensionTypes.Add(namedType);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return extensionTypes;
+    }
+
     private static bool TryVisitNodeFind(XmlNode? node, string nodeName, out string summary)
     {
         if (node == null)

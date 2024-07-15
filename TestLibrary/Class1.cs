@@ -22,6 +22,12 @@ public class TestClass
     /// </summary>
     public int TestProperty { get; set; }
     
+    
+    public int this[int a]
+    {
+        get => 0;
+    }
+    
     /// <summary>
     /// method remark.
     /// </summary>
@@ -86,4 +92,16 @@ public class TestClass2
 
 public class TestList : List<int>{
 
+
+}
+
+public class TestList2
+{
+
+    public List<int> TestList { get; set; } = new List<int>();
+    
+    public int this[int a]
+    {
+        get => TestList[a];
+    }
 }

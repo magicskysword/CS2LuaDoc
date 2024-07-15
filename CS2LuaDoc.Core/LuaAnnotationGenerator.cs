@@ -128,11 +128,11 @@ public class LuaAnnotationGenerator
                 sb.AppendLine($"-- {remarkOneLine}");
             }
         }
-        sb.Append($"---@class {classMetaData.GetFullName()}");
+        sb.Append($"---@class {classMetaData.GetFullName(GetLuaType)}");
         // 继承处理
         if (classMetaData.BaseClassMetaData != null)
         {
-            sb.Append($" : {classMetaData.BaseClassMetaData.GetFullName()}");
+            sb.Append($" : {classMetaData.BaseClassMetaData.GetFullName(GetLuaType)}");
         }
         sb.AppendLine();
         
@@ -141,7 +141,7 @@ public class LuaAnnotationGenerator
         {
             foreach (var typeParameter in classMetaData.GenericTypeParameters)
             {
-                sb.Append($"---@generic {typeParameter.Name}");
+                sb.Append($"---generic param {typeParameter.Name}");
                 if (typeParameter.ConstraintTypes.Count > 0)
                 {
                     sb.Append(" : ");
@@ -218,12 +218,24 @@ public class LuaAnnotationGenerator
         {
             return;
         }
-        
-        sb.Append($"---@field {propertyMetaData.Name} {GetLuaType(propertyMetaData.Type)}");
-        if(TryAnalysisNormalRemark(propertyMetaData.RawRemark, out var remark))
+
+        if (propertyMetaData.IsIndexer)
         {
-            var remarkInOneLine = remark.TransToSingleLine(false);
-            sb.Append($" {remarkInOneLine}");
+            sb.Append($"---@field [{string.Join(", ", propertyMetaData.Parameters.Select(param => GetLuaType(param.Type)))}] {GetLuaType(propertyMetaData.Type)}");
+            if(TryAnalysisNormalRemark(propertyMetaData.RawRemark, out var remark))
+            {
+                var remarkInOneLine = remark.TransToSingleLine(false);
+                sb.Append($" {remarkInOneLine}");
+            }
+        }
+        else
+        {
+            sb.Append($"---@field {propertyMetaData.Name} {GetLuaType(propertyMetaData.Type)}");
+            if(TryAnalysisNormalRemark(propertyMetaData.RawRemark, out var remark))
+            {
+                var remarkInOneLine = remark.TransToSingleLine(false);
+                sb.Append($" {remarkInOneLine}");
+            }
         }
         sb.AppendLine();
     }
@@ -327,6 +339,11 @@ public class LuaAnnotationGenerator
             }
             
             sb.Append($"---@param {paramName} {GetLuaType(parameterMetaData.Type)}");
+
+            if (parameterMetaData.IsOptional)
+            {
+                sb.Append("?");
+            }
 
             if (parameterMetaData.IsRef)
             {
@@ -471,11 +488,42 @@ public class LuaAnnotationGenerator
                 break;
             }
             // 列表类型处理
-            case INamedTypeSymbol namedTypeSymbol when namedTypeSymbol.IsGenericType && namedTypeSymbol.Name == "List":
+            case INamedTypeSymbol namedTypeSymbol when namedTypeSymbol is { IsGenericType: true, Name: "List" }
+                                                       && namedTypeSymbol.GetFullNamespace() == "System.Collections.Generic":
             {
                 var sb = new StringBuilder();
                 sb.Append(GetLuaType(namedTypeSymbol.TypeArguments[0]));
                 sb.Append("[]");
+                
+                sb.Append(" | ");
+                
+                sb.Append("System.Collections.Generic.List<");
+                sb.Append(GetLuaType(namedTypeSymbol.TypeArguments[0]));
+                sb.Append(">");
+                
+                retTypeStr = sb.ToString();
+                break;
+            }
+            // 字典类型处理
+            case INamedTypeSymbol namedTypeSymbol when namedTypeSymbol is { IsGenericType: true, Name: "Dictionary" }
+                                                       && namedTypeSymbol.GetFullNamespace() ==
+                                                       "System.Collections.Generic":
+            {
+                var sb = new StringBuilder();
+                sb.Append("table<");
+                sb.Append(GetLuaType(namedTypeSymbol.TypeArguments[0]));
+                sb.Append(", ");
+                sb.Append(GetLuaType(namedTypeSymbol.TypeArguments[1]));
+                sb.Append(">");
+                
+                sb.Append(" | ");
+                
+                sb.Append("System.Collections.Generic.Dictionary<");
+                sb.Append(GetLuaType(namedTypeSymbol.TypeArguments[0]));
+                sb.Append(", ");
+                sb.Append(GetLuaType(namedTypeSymbol.TypeArguments[1]));
+                sb.Append(">");
+                
                 retTypeStr = sb.ToString();
                 break;
             }
@@ -506,10 +554,12 @@ public class LuaAnnotationGenerator
                     case SpecialType.System_UInt32:
                     case SpecialType.System_Int64:
                     case SpecialType.System_UInt64:
+                        retTypeStr = "int";
+                        break;
                     case SpecialType.System_Decimal:
                     case SpecialType.System_Single:
                     case SpecialType.System_Double:
-                        retTypeStr = $"number | {type.GetFullName()}";
+                        retTypeStr = $"number";
                         break;
                     default:
                         retTypeStr = type.GetFullName();

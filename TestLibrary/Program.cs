@@ -20,7 +20,7 @@ public class Program
 
         if (Directory.Exists(outDir))
         {
-            Directory.Delete(outDir, true);
+            ClearDirectory(outDir);
         }
         Directory.CreateDirectory(outDir);
 
@@ -32,5 +32,20 @@ public class Program
         
         Console.WriteLine("Build Success");
         return 0;
+    }
+
+    private static void ClearDirectory(string outDir)
+    {
+        var files = Directory.GetFiles(outDir);
+        foreach (var file in files)
+        {
+            File.Delete(file);
+        }
+        
+        var dirs = Directory.GetDirectories(outDir);
+        foreach (var dir in dirs)
+        {
+            ClearDirectory(dir);
+        }
     }
 }
