@@ -24,12 +24,11 @@
 
 当前可传入的参数有：
 
-| 参数                                    | 必须项 | 说明                                 |
-| --------------------------------------- | :----: | ------------------------------------ |
-| `[SolutionPath]`                        |   √    |                                      |
-| -o\|--output `<OutputPath>`             |   √    | 程序输出目录                         |
-| --exclude-namespace`<ExcludeNamespace>` |        | 排除的命名空间                       |
-| --exclude-assembly `<ExcludeAssembly>`  |        | 排除的程序集                         |
-| --exclude-assembly <ExcludeAssembly>    |        | 排除的程序集                         |
-| --include-assembly <IncludeAssembly>    |        | 包含的程序集                         |
-| -p\|--public-only                       |        | 是否仅导出public类、方法、字段和属性 |
+| 参数                                     | 必须项 | 说明                                      |
+| ---------------------------------------- | :----: | ----------------------------------------- |
+| `[SolutionPath]`                         |   √    | 解决方案路径，如 `D:\Project\Project.sln` |
+| -o\|--output `<OutputPath>`              |   √    | 程序输出目录                              |
+| --exclude-namespace `<ExcludeNamespace>` |        | 排除的命名空间                            |
+| --exclude-assembly `<ExcludeAssembly>`   |        | 排除的程序集                              |
+| --include-assembly `<IncludeAssembly>`   |        | 包含的程序集                              |
+| -p\|--public-only                        |        | 是否仅导出public类、方法、字段和属性      |
